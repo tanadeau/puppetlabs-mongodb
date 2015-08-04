@@ -118,6 +118,9 @@ class mongodb::server::config {
       # - $shardsvr
       # - $slowms
       # - $smallfiles
+      # - $ssl
+      # - $ssl_ca
+      # - $ssl_key
       # - $syslog
       # - $verbose
       # - $verbositylevel

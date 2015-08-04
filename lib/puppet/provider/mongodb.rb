@@ -27,7 +27,7 @@ class Puppet::Provider::Mongodb < Puppet::Provider
     file
   end
 
-  def self.get_conn_string
+  def self.get_mongo_conf
     file = get_mongod_conf_file
     # The mongo conf is probably a key-value store, even though 2.6 is
     # supposed to use YAML, because the config template is applied
@@ -35,23 +35,31 @@ class Puppet::Provider::Mongodb < Puppet::Provider
     # necessarily set. This attempts to get the port from both types of
     # config files.
     config = YAML.load_file(file)
+    config_hash = Hash.new
     if config.kind_of?(Hash) # Using a valid YAML file for mongo 2.6
-      bindip = config['net.bindIp']
-      port = config['net.port']
-      shardsvr = config['sharding.clusterRole']
-      confsvr = config['sharding.clusterRole']
+      config_hash['bindip'] = config['net.bindIp']
+      config_hash['port'] = config['net.port']
+      config_hash['shardsvr'] = config['sharding.clusterRole']
+      config_hash['confsvr'] = config['sharding.clusterRole']
+      config_hash['ssl'] = config['net.ssl.mode']
     else # It has to be a key-value config file
       config = {}
       File.readlines(file).collect do |line|
-         k,v = line.split('=')
-         config[k.rstrip] = v.lstrip.chomp if k and v
+        k,v = line.split('=')
+        config[k.rstrip] = v.lstrip.chomp if k and v
       end
-      bindip = config['bind_ip']
-      port = config['port']
-      shardsvr = config['shardsvr']
-      confsvr = config['confsvr']
+      config_hash['bindip'] = config['bind_ip']
+      config_hash['port'] = config['port']
+      config_hash['shardsvr'] = config['shardsvr']
+      config_hash['confsvr'] = config['confsvr']
+      config_hash['ssl'] = config['sslMode']
     end
 
+    config_hash
+  end
+
+  def self.get_conn_string(config)
+    bindip = config.fetch('bindip')
     if bindip
       first_ip_in_list = bindip.split(',').first
       if first_ip_in_list.eql? '0.0.0.0'
@@ -61,6 +69,9 @@ class Puppet::Provider::Mongodb < Puppet::Provider
       end
     end
 
+    port = config.fetch('port')
+    shardsvr = config.fetch('shardsvr')
+    confsvr = config.fetch('confsvr')
     if port
       port_real = port
     elsif !port and (confsvr.eql? 'configsvr' or confsvr.eql? 'true')
@@ -74,13 +85,26 @@ class Puppet::Provider::Mongodb < Puppet::Provider
     "#{ip_real}:#{port_real}"
   end
 
+  def self.has_ssl(config)
+    ssl_mode = config.fetch('ssl')
+    ssl_mode.nil? ? false : ssl_mode != 'disabled'
+  end
+
   # Mongo Command Wrapper
   def self.mongo_eval(cmd, db = 'admin')
     if mongorc_file
         cmd = mongorc_file + cmd
     end
 
-    out = mongo([db, '--quiet', '--host', get_conn_string, '--eval', cmd])
+    config = get_mongo_conf
+    args = [db, '--quiet', '--host', get_conn_string(config)]
+    if has_ssl(config)
+      args.push('--ssl')
+    end
+
+    args += ['--eval', cmd]
+
+    out = mongo(args)
 
     out.gsub!(/ObjectId\(([^)]*)\)/, '\1')
     out
